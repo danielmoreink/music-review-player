@@ -15,7 +15,3 @@ Then put your audio files into `songs/` and open the site in your browser.
 Your webspace needs PHP enabled because `index.php` scans the `songs/` folder when the page loads.
 
 Supported audio extensions: `.aac`, `.aiff`, `.flac`, `.m4a`, `.mp3`, `.ogg`, `.opus`, `.wav`, `.webm`.
-
-## Optional Local Preview
-
-The `server.js`, `package.json`, and `public/` files are only for local Node-based previewing.
