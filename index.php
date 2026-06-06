@@ -1,6 +1,10 @@
 <?php
+// Server-side setup: this PHP runs before the browser receives the page.
+// It finds audio files in /songs and prepares the track list used below.
 $songsDir = __DIR__ . DIRECTORY_SEPARATOR . 'songs';
 $songsUrl = 'songs/';
+
+// Only files with these extensions will appear on the page.
 $audioTypes = [
     'aac',
     'aiff',
@@ -13,6 +17,7 @@ $audioTypes = [
     'webm',
 ];
 
+// Create the songs folder if it does not exist yet.
 if (!is_dir($songsDir)) {
     mkdir($songsDir, 0755, true);
 }
@@ -20,6 +25,8 @@ if (!is_dir($songsDir)) {
 $songs = [];
 $entries = scandir($songsDir);
 
+// Read every file in /songs, ignore folders and unsupported file types,
+// and store the filename plus the server-side file timestamp.
 if ($entries !== false) {
     foreach ($entries as $entry) {
         if ($entry === '.' || $entry === '..') {
@@ -30,6 +37,7 @@ if ($entries !== false) {
         $extension = strtolower(pathinfo($entry, PATHINFO_EXTENSION));
 
         if (is_file($filePath) && in_array($extension, $audioTypes, true)) {
+            // On many webspaces, filectime is the upload/change time, not the original computer creation date.
             $createdAt = filectime($filePath);
             $modifiedAt = filemtime($filePath);
 
@@ -41,6 +49,7 @@ if ($entries !== false) {
     }
 }
 
+// Keep the default server order alphabetical before any browser-saved drag order is applied.
 usort($songs, function ($a, $b) {
     return strnatcasecmp($a['name'], $b['name']);
 });
@@ -63,6 +72,7 @@ usort($songs, function ($a, $b) {
         </div>
       </header>
 
+      <!-- If PHP did not find any audio files, show a simple empty state. -->
       <?php if (count($songs) === 0): ?>
         <section class="empty">
           <h2>No audio files yet</h2>
@@ -70,8 +80,10 @@ usort($songs, function ($a, $b) {
         </section>
       <?php else: ?>
         <section class="songs" aria-label="Audio files">
+          <!-- PHP creates one card per audio file. -->
           <?php foreach ($songs as $index => $song): ?>
             <?php
+              // Escape values before printing them into HTML so filenames cannot break the page.
               $songHref = $songsUrl . rawurlencode($song['name']);
               $songName = htmlspecialchars($song['name'], ENT_QUOTES, 'UTF-8');
               $trackNumber = str_pad((string) ($index + 1), 2, '0', STR_PAD_LEFT);
@@ -94,28 +106,34 @@ usort($songs, function ($a, $b) {
       <?php endif; ?>
     </main>
     <script>
+      // Browser-side behavior starts here. This runs after PHP has rendered the track cards.
       const songsContainer = document.querySelector(".songs");
 
       if (songsContainer) {
+        // The saved order is browser-local. It remembers your arrangement on this device/browser.
         const storageKey = `mix-listener-order:${location.pathname}`;
         let draggedSong = null;
         let activePointerId = null;
 
+        // Return all current track cards in their visible top-to-bottom order.
         function songRows() {
           return Array.from(songsContainer.querySelectorAll(".song"));
         }
 
+        // Save the current visible order using each track's filename as its stable ID.
         function saveOrder() {
           const order = songRows().map((row) => row.dataset.song);
           localStorage.setItem(storageKey, JSON.stringify(order));
         }
 
+        // Re-number cards after dragging so numbering always runs from 01 to the final track.
         function updateNumbers() {
           songRows().forEach((row, index) => {
             row.querySelector(".track-number").textContent = String(index + 1).padStart(2, "0");
           });
         }
 
+        // Apply a previously saved order. New files that are not in localStorage stay at the end.
         function restoreOrder() {
           let saved = [];
 
@@ -136,6 +154,7 @@ usort($songs, function ($a, $b) {
           updateNumbers();
         }
 
+        // Find the card that should come after the dragged card for a given pointer Y position.
         function rowAfterPointer(y) {
           const rows = songRows().filter((row) => row !== draggedSong);
 
@@ -151,6 +170,7 @@ usort($songs, function ($a, $b) {
           }, { offset: Number.NEGATIVE_INFINITY, row: null }).row;
         }
 
+        // Move the dragged card in the DOM and immediately update the visible numbers.
         function moveDraggedSong(y) {
           if (!draggedSong) {
             return;
@@ -167,6 +187,7 @@ usort($songs, function ($a, $b) {
           updateNumbers();
         }
 
+        // Finish a drag operation, remove drag styling, and persist the new order.
         function stopDragging() {
           if (!draggedSong) {
             return;
@@ -179,6 +200,7 @@ usort($songs, function ($a, $b) {
           saveOrder();
         }
 
+        // Start dragging only when the user presses the handle, not the audio controls or download link.
         songsContainer.addEventListener("pointerdown", (event) => {
           const handle = event.target.closest(".drag-handle");
 
@@ -199,6 +221,7 @@ usort($songs, function ($a, $b) {
           handle.setPointerCapture(event.pointerId);
         });
 
+        // While dragging, keep inserting the card before/after nearby cards based on pointer position.
         songsContainer.addEventListener("pointermove", (event) => {
           if (!draggedSong || event.pointerId !== activePointerId) {
             return;
@@ -208,18 +231,21 @@ usort($songs, function ($a, $b) {
           moveDraggedSong(event.clientY);
         });
 
+        // Releasing the pointer completes the reorder.
         songsContainer.addEventListener("pointerup", (event) => {
           if (event.pointerId === activePointerId) {
             stopDragging();
           }
         });
 
+        // If the browser cancels the pointer interaction, clean up like a normal drag end.
         songsContainer.addEventListener("pointercancel", (event) => {
           if (event.pointerId === activePointerId) {
             stopDragging();
           }
         });
 
+        // When one audio player starts, pause every other player and highlight the active card.
         songsContainer.addEventListener("play", (event) => {
           if (event.target.tagName !== "AUDIO") {
             return;
@@ -238,6 +264,7 @@ usort($songs, function ($a, $b) {
           });
         }, true);
 
+        // If a track reaches the end and pauses, remove the active highlight.
         songsContainer.addEventListener("pause", (event) => {
           if (event.target.tagName !== "AUDIO" || !event.target.ended) {
             return;
@@ -250,6 +277,7 @@ usort($songs, function ($a, $b) {
           }
         }, true);
 
+        // Some browsers fire ended separately; this guarantees the highlight is removed.
         songsContainer.addEventListener("ended", (event) => {
           const row = event.target.closest(".song");
 
@@ -258,6 +286,7 @@ usort($songs, function ($a, $b) {
           }
         }, true);
 
+        // Restore your saved order after all functions and listeners are ready.
         restoreOrder();
       }
     </script>
