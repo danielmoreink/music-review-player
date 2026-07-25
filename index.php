@@ -264,9 +264,9 @@ usort($songs, function ($a, $b) {
           });
         }, true);
 
-        // If a track reaches the end and pauses, remove the active highlight.
+        // If the user manually pauses a track, remove the active highlight.
         songsContainer.addEventListener("pause", (event) => {
-          if (event.target.tagName !== "AUDIO" || !event.target.ended) {
+          if (event.target.tagName !== "AUDIO" || event.target.ended) {
             return;
           }
 
@@ -277,15 +277,30 @@ usort($songs, function ($a, $b) {
           }
         }, true);
 
-        // Some browsers fire ended separately; this guarantees the highlight is removed.
+        // When a track ends, play the next visible track. Stop after the last one.
         songsContainer.addEventListener("ended", (event) => {
-          const row = event.target.closest(".song");
+          if (event.target.tagName !== "AUDIO") {
+            return;
+          }
 
-          if (row) {
-            row.classList.remove("active");
+          const rows = songRows();
+          const currentRow = event.target.closest(".song");
+          const currentIndex = rows.indexOf(currentRow);
+          const nextRow = rows[currentIndex + 1];
+
+          if (currentRow) {
+            currentRow.classList.remove("active");
+          }
+
+          if (nextRow) {
+            const nextAudio = nextRow.querySelector("audio");
+
+            if (nextAudio) {
+              nextAudio.currentTime = 0;
+              nextAudio.play();
+            }
           }
         }, true);
-
         // Restore your saved order after all functions and listeners are ready.
         restoreOrder();
       }
