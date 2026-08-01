@@ -43,6 +43,7 @@ if ($entries !== false) {
 
             $songs[] = [
                 'name' => $entry,
+                'code' => strtolower(base_convert(sprintf('%u', crc32($entry)), 10, 36)),
                 'createdAt' => $createdAt !== false ? $createdAt : $modifiedAt,
             ];
         }
@@ -68,8 +69,9 @@ usort($songs, function ($a, $b) {
       <header class="topbar">
         <div>
           <p class="eyebrow">Songs directory</p>
-          <h1>Mix Listener</h1>
+          <h1>Mix Listener <span id="total-playtime" class="total-playtime" aria-live="polite"></span></h1>
         </div>
+        <button id="share-order" class="share-order" type="button">Share order</button>
       </header>
 
       <!-- If PHP did not find any audio files, show a simple empty state. -->
@@ -86,10 +88,11 @@ usort($songs, function ($a, $b) {
               // Escape values before printing them into HTML so filenames cannot break the page.
               $songHref = $songsUrl . rawurlencode($song['name']);
               $songName = htmlspecialchars($song['name'], ENT_QUOTES, 'UTF-8');
+              $songCode = htmlspecialchars($song['code'], ENT_QUOTES, 'UTF-8');
               $trackNumber = str_pad((string) ($index + 1), 2, '0', STR_PAD_LEFT);
               $createdDate = date('Y-m-d H:i', $song['createdAt']);
             ?>
-            <article class="song" data-song="<?= $songName ?>">
+            <article class="song" data-song="<?= $songName ?>" data-code="<?= $songCode ?>">
               <div class="song-info">
                 <button class="drag-handle" type="button" aria-label="Move track" title="Move track">::</button>
                 <span class="track-number"><?= $trackNumber ?></span>
@@ -108,6 +111,8 @@ usort($songs, function ($a, $b) {
     <script>
       // Browser-side behavior starts here. This runs after PHP has rendered the track cards.
       const songsContainer = document.querySelector(".songs");
+      const totalPlaytimeEl = document.querySelector("#total-playtime");
+      const shareOrderButton = document.querySelector("#share-order");
 
       if (songsContainer) {
         // The saved order is browser-local. It remembers your arrangement on this device/browser.
@@ -119,11 +124,79 @@ usort($songs, function ($a, $b) {
         function songRows() {
           return Array.from(songsContainer.querySelectorAll(".song"));
         }
+        // Return all audio players in the current visible order.
+        function audioElements() {
+          return songRows().map((row) => row.querySelector("audio")).filter(Boolean);
+        }
 
-        // Save the current visible order using each track's filename as its stable ID.
+        // Format seconds as M:SS or H:MM:SS for the headline total.
+        function formatDuration(totalSeconds) {
+          const roundedSeconds = Math.round(totalSeconds);
+          const hours = Math.floor(roundedSeconds / 3600);
+          const minutes = Math.floor((roundedSeconds % 3600) / 60);
+          const seconds = roundedSeconds % 60;
+
+          if (hours > 0) {
+            return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+          }
+
+          return `${minutes}:${String(seconds).padStart(2, "0")}`;
+        }
+
+        // Sum loaded audio durations and show the total in the headline.
+        function updateTotalPlaytime() {
+          if (!totalPlaytimeEl) {
+            return;
+          }
+
+          const audios = audioElements();
+          const durations = audios.map((audio) => audio.duration).filter(Number.isFinite);
+
+          if (durations.length === 0) {
+            totalPlaytimeEl.textContent = "";
+            return;
+          }
+
+          const totalSeconds = durations.reduce((sum, duration) => sum + duration, 0);
+          const stillLoading = durations.length < audios.length;
+          totalPlaytimeEl.textContent = stillLoading ? `(${formatDuration(totalSeconds)}+)` : `(${formatDuration(totalSeconds)})`;
+        }
+
+        // Return the current visible order using each track's short stable code.
+        function currentOrder() {
+          return songRows().map((row) => row.dataset.code);
+        }
+
+        // Save the current visible order in this browser for normal reloads without a shared URL.
         function saveOrder() {
-          const order = songRows().map((row) => row.dataset.song);
-          localStorage.setItem(storageKey, JSON.stringify(order));
+          localStorage.setItem(storageKey, JSON.stringify(currentOrder()));
+        }
+
+        // Read a shared order from the URL. Example: ?order=abc123.def456
+        function orderFromUrl() {
+          const orderParam = new URLSearchParams(location.search).get("order");
+
+          if (!orderParam) {
+            return [];
+          }
+
+          if (orderParam.trim().startsWith("[")) {
+            try {
+              const order = JSON.parse(orderParam);
+              return Array.isArray(order) ? order.filter((songName) => typeof songName === "string") : [];
+            } catch (error) {
+              return [];
+            }
+          }
+
+          return orderParam.split(".").map((code) => code.trim()).filter(Boolean);
+        }
+
+        // Build a shareable URL containing the current visible song order.
+        function shareUrl() {
+          const url = new URL(location.href);
+          url.searchParams.set("order", currentOrder().join("."));
+          return url.toString();
         }
 
         // Re-number cards after dragging so numbering always runs from 01 to the final track.
@@ -133,8 +206,29 @@ usort($songs, function ($a, $b) {
           });
         }
 
-        // Apply a previously saved order. New files that are not in localStorage stay at the end.
+        // Apply a saved or shared order. New files that are not in that order stay at the end.
+        function applyOrder(order) {
+          order.forEach((songId) => {
+            const row = songsContainer.querySelector(`.song[data-code="${CSS.escape(songId)}"], .song[data-song="${CSS.escape(songId)}"]`);
+
+            if (row) {
+              songsContainer.append(row);
+            }
+          });
+
+          updateNumbers();
+        }
+
+        // A shared URL order wins. If there is no URL order, use this browser's saved order.
         function restoreOrder() {
+          const sharedOrder = orderFromUrl();
+
+          if (sharedOrder.length > 0) {
+            applyOrder(sharedOrder);
+            saveOrder();
+            return;
+          }
+
           let saved = [];
 
           try {
@@ -143,15 +237,7 @@ usort($songs, function ($a, $b) {
             saved = [];
           }
 
-          saved.forEach((songName) => {
-            const row = songsContainer.querySelector(`.song[data-song="${CSS.escape(songName)}"]`);
-
-            if (row) {
-              songsContainer.append(row);
-            }
-          });
-
-          updateNumbers();
+          applyOrder(Array.isArray(saved) ? saved : []);
         }
 
         // Find the card that should come after the dragged card for a given pointer Y position.
@@ -245,6 +331,24 @@ usort($songs, function ($a, $b) {
           }
         });
 
+
+        // Copy a URL that includes the current top-to-bottom song order.
+        if (shareOrderButton) {
+          shareOrderButton.addEventListener("click", async () => {
+            const url = shareUrl();
+
+            try {
+              await navigator.clipboard.writeText(url);
+              shareOrderButton.textContent = "Copied";
+            } catch (error) {
+              prompt("Copy this link:", url);
+            }
+
+            window.setTimeout(() => {
+              shareOrderButton.textContent = "Share order";
+            }, 1800);
+          });
+        }
         // When one audio player starts, pause every other player and highlight the active card.
         songsContainer.addEventListener("play", (event) => {
           if (event.target.tagName !== "AUDIO") {
@@ -301,8 +405,15 @@ usort($songs, function ($a, $b) {
             }
           }
         }, true);
+        // Audio durations are only known after each browser audio element has loaded its metadata.
+        audioElements().forEach((audio) => {
+          audio.addEventListener("loadedmetadata", updateTotalPlaytime);
+          audio.addEventListener("durationchange", updateTotalPlaytime);
+        });
+
         // Restore your saved order after all functions and listeners are ready.
         restoreOrder();
+        updateTotalPlaytime();
       }
     </script>
   </body>

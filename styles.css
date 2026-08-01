@@ -56,10 +56,20 @@ p {
 }
 
 h1 {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 12px;
   margin-bottom: 0;
   font-size: clamp(2.25rem, 6vw, 4.75rem);
   line-height: 0.95;
   letter-spacing: 0;
+}
+
+.total-playtime {
+  color: var(--muted);
+  font-size: clamp(1rem, 2vw, 1.5rem);
+  font-weight: 700;
 }
 
 .songs {
@@ -161,6 +171,7 @@ audio {
   max-height: 32px;
 }
 
+.share-order,
 .download {
   display: inline-flex;
   align-items: center;
@@ -176,6 +187,13 @@ audio {
   white-space: nowrap;
 }
 
+.share-order {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+}
+
+.share-order:hover,
 .download:hover {
   filter: brightness(1.08);
 }
@@ -215,6 +233,7 @@ audio {
     grid-template-columns: 1fr;
   }
 
+  .share-order,
   .download {
     width: 100%;
   }
