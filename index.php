@@ -381,14 +381,27 @@ usort($songs, function ($a, $b) {
           }
         }, true);
 
+        // Firefox Mobile can occasionally fire ended too early on streamed audio.
+        // Only continue when the player is genuinely near the real end of the file.
+        function isActuallyFinished(audio) {
+          return Number.isFinite(audio.duration) && audio.duration > 0 && audio.currentTime >= audio.duration - 2;
+        }
+
         // When a track ends, play the next visible track. Stop after the last one.
         songsContainer.addEventListener("ended", (event) => {
           if (event.target.tagName !== "AUDIO") {
             return;
           }
 
+          const activeAudio = event.target;
+
+          if (!isActuallyFinished(activeAudio)) {
+            activeAudio.play().catch(() => {});
+            return;
+          }
+
           const rows = songRows();
-          const currentRow = event.target.closest(".song");
+          const currentRow = activeAudio.closest(".song");
           const currentIndex = rows.indexOf(currentRow);
           const nextRow = rows[currentIndex + 1];
 
@@ -401,7 +414,7 @@ usort($songs, function ($a, $b) {
 
             if (nextAudio) {
               nextAudio.currentTime = 0;
-              nextAudio.play();
+              nextAudio.play().catch(() => {});
             }
           }
         }, true);
