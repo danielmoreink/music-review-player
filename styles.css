@@ -72,6 +72,28 @@ h1 {
   font-weight: 700;
 }
 
+.player-panel {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid rgba(166, 172, 164, 0.24);
+  border-radius: 8px;
+  background: var(--panel-strong);
+}
+
+.current-track {
+  min-height: 1.2em;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+#main-player {
+  width: 100%;
+}
+
 .songs {
   display: grid;
   gap: 8px;
@@ -172,6 +194,7 @@ audio {
 }
 
 .share-order,
+.play-track,
 .download {
   display: inline-flex;
   align-items: center;
@@ -187,13 +210,20 @@ audio {
   white-space: nowrap;
 }
 
-.share-order {
+.share-order,
+.play-track {
   border: 1px solid var(--line);
   background: transparent;
   color: var(--text);
 }
 
+.song.active .play-track {
+  border-color: rgba(200, 159, 98, 0.72);
+  color: var(--accent);
+}
+
 .share-order:hover,
+.play-track:hover,
 .download:hover {
   filter: brightness(1.08);
 }
@@ -234,6 +264,7 @@ audio {
   }
 
   .share-order,
+  .play-track,
   .download {
     width: 100%;
   }

@@ -74,6 +74,13 @@ usort($songs, function ($a, $b) {
         <button id="share-order" class="share-order" type="button">Share order</button>
       </header>
 
+      <?php if (count($songs) > 0): ?>
+        <section class="player-panel" aria-label="Main audio player">
+          <div id="current-track" class="current-track">Choose a track</div>
+          <audio id="main-player" controls preload="metadata"></audio>
+        </section>
+      <?php endif; ?>
+
       <!-- If PHP did not find any audio files, show a simple empty state. -->
       <?php if (count($songs) === 0): ?>
         <section class="empty">
@@ -87,12 +94,13 @@ usort($songs, function ($a, $b) {
             <?php
               // Escape values before printing them into HTML so filenames cannot break the page.
               $songHref = $songsUrl . rawurlencode($song['name']);
+              $songHrefAttr = htmlspecialchars($songHref, ENT_QUOTES, 'UTF-8');
               $songName = htmlspecialchars($song['name'], ENT_QUOTES, 'UTF-8');
               $songCode = htmlspecialchars($song['code'], ENT_QUOTES, 'UTF-8');
               $trackNumber = str_pad((string) ($index + 1), 2, '0', STR_PAD_LEFT);
               $createdDate = date('Y-m-d H:i', $song['createdAt']);
             ?>
-            <article class="song" data-song="<?= $songName ?>" data-code="<?= $songCode ?>">
+            <article class="song" data-song="<?= $songName ?>" data-code="<?= $songCode ?>" data-src="<?= $songHrefAttr ?>">
               <div class="song-info">
                 <button class="drag-handle" type="button" aria-label="Move track" title="Move track">::</button>
                 <span class="track-number"><?= $trackNumber ?></span>
@@ -101,8 +109,8 @@ usort($songs, function ($a, $b) {
                   <div class="song-date">Created <?= $createdDate ?></div>
                 </div>
               </div>
-              <audio controls preload="metadata" src="<?= $songHref ?>"></audio>
-              <a class="download" href="<?= $songHref ?>" download>Download</a>
+              <button class="play-track" type="button">Play</button>
+              <a class="download" href="<?= $songHrefAttr ?>" download>Download</a>
             </article>
           <?php endforeach; ?>
         </section>
@@ -113,20 +121,20 @@ usort($songs, function ($a, $b) {
       const songsContainer = document.querySelector(".songs");
       const totalPlaytimeEl = document.querySelector("#total-playtime");
       const shareOrderButton = document.querySelector("#share-order");
+      const player = document.querySelector("#main-player");
+      const currentTrackEl = document.querySelector("#current-track");
 
-      if (songsContainer) {
+      if (songsContainer && player) {
         // The saved order is browser-local. It remembers your arrangement on this device/browser.
         const storageKey = `mix-listener-order:${location.pathname}`;
         let draggedSong = null;
         let activePointerId = null;
+        let activeRow = null;
+        let autoAdvanceTimer = null;
 
         // Return all current track cards in their visible top-to-bottom order.
         function songRows() {
           return Array.from(songsContainer.querySelectorAll(".song"));
-        }
-        // Return all audio players in the current visible order.
-        function audioElements() {
-          return songRows().map((row) => row.querySelector("audio")).filter(Boolean);
         }
 
         // Format seconds as M:SS or H:MM:SS for the headline total.
@@ -149,8 +157,8 @@ usort($songs, function ($a, $b) {
             return;
           }
 
-          const audios = audioElements();
-          const durations = audios.map((audio) => audio.duration).filter(Number.isFinite);
+          const rows = songRows();
+          const durations = rows.map((row) => Number(row.dataset.duration)).filter(Number.isFinite);
 
           if (durations.length === 0) {
             totalPlaytimeEl.textContent = "";
@@ -158,8 +166,26 @@ usort($songs, function ($a, $b) {
           }
 
           const totalSeconds = durations.reduce((sum, duration) => sum + duration, 0);
-          const stillLoading = durations.length < audios.length;
+          const stillLoading = durations.length < rows.length;
           totalPlaytimeEl.textContent = stillLoading ? `(${formatDuration(totalSeconds)}+)` : `(${formatDuration(totalSeconds)})`;
+        }
+
+        // Load track durations without creating multiple visible players.
+        function loadTrackDuration(row) {
+          const audio = new Audio();
+          audio.preload = "metadata";
+
+          audio.addEventListener("loadedmetadata", () => {
+            if (Number.isFinite(audio.duration)) {
+              row.dataset.duration = String(audio.duration);
+              updateTotalPlaytime();
+            }
+
+            audio.removeAttribute("src");
+            audio.load();
+          }, { once: true });
+
+          audio.src = row.dataset.src;
         }
 
         // Return the current visible order using each track's short stable code.
@@ -286,7 +312,54 @@ usort($songs, function ($a, $b) {
           saveOrder();
         }
 
-        // Start dragging only when the user presses the handle, not the audio controls or download link.
+        function setActiveRow(row) {
+          activeRow = row;
+          songRows().forEach((songRow) => {
+            const isActive = songRow === row;
+            songRow.classList.toggle("active", isActive);
+            songRow.querySelector(".play-track").textContent = isActive && !player.paused ? "Pause" : "Play";
+          });
+
+          currentTrackEl.textContent = row ? row.dataset.song : "Choose a track";
+        }
+
+        function playRow(row, resetPosition = true) {
+          if (!row) {
+            return;
+          }
+
+          window.clearTimeout(autoAdvanceTimer);
+          setActiveRow(row);
+
+          if (player.dataset.code !== row.dataset.code) {
+            player.src = row.dataset.src;
+            player.dataset.code = row.dataset.code;
+            resetPosition = true;
+          }
+
+          if (resetPosition) {
+            player.currentTime = 0;
+          }
+
+          autoAdvanceTimer = window.setTimeout(() => {
+            player.play().catch(() => {});
+          }, 100);
+        }
+
+        function playNextTrack() {
+          const rows = songRows();
+          const currentIndex = activeRow ? rows.indexOf(activeRow) : -1;
+          const nextRow = rows[currentIndex + 1];
+
+          if (nextRow) {
+            playRow(nextRow, true);
+          } else {
+            setActiveRow(null);
+            player.removeAttribute("data-code");
+          }
+        }
+
+        // Start dragging only when the user presses the handle, not the play or download controls.
         songsContainer.addEventListener("pointerdown", (event) => {
           const handle = event.target.closest(".drag-handle");
 
@@ -331,7 +404,6 @@ usort($songs, function ($a, $b) {
           }
         });
 
-
         // Copy a URL that includes the current top-to-bottom song order.
         if (shareOrderButton) {
           shareOrderButton.addEventListener("click", async () => {
@@ -349,84 +421,42 @@ usort($songs, function ($a, $b) {
             }, 1800);
           });
         }
-        // When one audio player starts, pause every other player and highlight the active card.
-        songsContainer.addEventListener("play", (event) => {
-          if (event.target.tagName !== "AUDIO") {
+
+        songsContainer.addEventListener("click", (event) => {
+          const button = event.target.closest(".play-track");
+
+          if (!button) {
             return;
           }
 
-          const activeAudio = event.target;
+          const row = button.closest(".song");
 
-          songsContainer.querySelectorAll("audio").forEach((audio) => {
-            if (audio !== activeAudio) {
-              audio.pause();
-            }
-          });
-
-          songRows().forEach((row) => {
-            row.classList.toggle("active", row.contains(activeAudio));
-          });
-        }, true);
-
-        // If the user manually pauses a track, remove the active highlight.
-        songsContainer.addEventListener("pause", (event) => {
-          if (event.target.tagName !== "AUDIO" || event.target.ended) {
+          if (row === activeRow && !player.paused) {
+            player.pause();
             return;
           }
 
-          const row = event.target.closest(".song");
-
-          if (row) {
-            row.classList.remove("active");
-          }
-        }, true);
-
-        // Firefox Mobile can occasionally fire ended too early on streamed audio.
-        // Only continue when the player is genuinely near the real end of the file.
-        function isActuallyFinished(audio) {
-          return Number.isFinite(audio.duration) && audio.duration > 0 && audio.currentTime >= audio.duration - 2;
-        }
-
-        // When a track ends, play the next visible track. Stop after the last one.
-        songsContainer.addEventListener("ended", (event) => {
-          if (event.target.tagName !== "AUDIO") {
-            return;
-          }
-
-          const activeAudio = event.target;
-
-          if (!isActuallyFinished(activeAudio)) {
-            activeAudio.play().catch(() => {});
-            return;
-          }
-
-          const rows = songRows();
-          const currentRow = activeAudio.closest(".song");
-          const currentIndex = rows.indexOf(currentRow);
-          const nextRow = rows[currentIndex + 1];
-
-          if (currentRow) {
-            currentRow.classList.remove("active");
-          }
-
-          if (nextRow) {
-            const nextAudio = nextRow.querySelector("audio");
-
-            if (nextAudio) {
-              nextAudio.currentTime = 0;
-              nextAudio.play().catch(() => {});
-            }
-          }
-        }, true);
-        // Audio durations are only known after each browser audio element has loaded its metadata.
-        audioElements().forEach((audio) => {
-          audio.addEventListener("loadedmetadata", updateTotalPlaytime);
-          audio.addEventListener("durationchange", updateTotalPlaytime);
+          playRow(row, row !== activeRow);
         });
+
+        player.addEventListener("play", () => {
+          if (activeRow) {
+            setActiveRow(activeRow);
+          }
+        });
+
+        player.addEventListener("pause", () => {
+          if (!player.ended && activeRow) {
+            setActiveRow(activeRow);
+          }
+        });
+
+        player.addEventListener("ended", playNextTrack);
 
         // Restore your saved order after all functions and listeners are ready.
         restoreOrder();
         updateTotalPlaytime();
+        songRows().forEach(loadTrackDuration);
       }
     </script>
   </body>
