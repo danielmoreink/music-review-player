@@ -4,6 +4,9 @@
 $songsDir = __DIR__ . DIRECTORY_SEPARATOR . 'songs';
 $songsUrl = 'songs/';
 
+// Increment this whenever site code or styling changes, so deployed cache state is visible.
+$appVersion = '1.0.13';
+
 // Only files with these extensions will appear on the page.
 $audioTypes = [
     'aac',
@@ -62,13 +65,15 @@ usort($songs, function ($a, $b) {
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="robots" content="noindex, nofollow, noarchive">
     <title>Mix Listener</title>
-    <link rel="stylesheet" href="styles.css">
+    <meta name="theme-color" content="#1f292a">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="stylesheet" href="styles.css?v=<?= urlencode($appVersion) ?>">
   </head>
   <body>
     <main class="shell">
       <header class="topbar">
         <div>
-          <p class="eyebrow">Songs directory</p>
+          <p class="eyebrow">Songs directory <span class="site-version">v<?= htmlspecialchars($appVersion, ENT_QUOTES, 'UTF-8') ?></span></p>
           <h1>Mix Listener <span id="total-playtime" class="total-playtime" aria-live="polite"></span></h1>
         </div>
         <button id="share-order" class="share-order" type="button">Share order</button>
@@ -131,6 +136,8 @@ usort($songs, function ($a, $b) {
         let activePointerId = null;
         let activeRow = null;
         let autoAdvanceTimer = null;
+        let isAutoHandoff = false;
+        let handedOffFromCode = null;
 
         // Return all current track cards in their visible top-to-bottom order.
         function songRows() {
@@ -150,7 +157,32 @@ usort($songs, function ($a, $b) {
 
           return `${minutes}:${String(seconds).padStart(2, "0")}`;
         }
+        function setMediaSessionPlaybackState(state) {
+          if (!("mediaSession" in navigator)) {
+            return;
+          }
 
+          navigator.mediaSession.playbackState = state;
+        }
+
+        function refreshMediaSession(row, state = player.paused ? "paused" : "playing") {
+          if (!("mediaSession" in navigator)) {
+            return;
+          }
+
+          if (row && typeof MediaMetadata !== "undefined") {
+            navigator.mediaSession.metadata = new MediaMetadata({
+              title: row.dataset.song,
+              artist: "Mix Listener",
+              album: "Music Review Player",
+              artwork: [
+                { src: "icon.svg", sizes: "512x512", type: "image/svg+xml" }
+              ]
+            });
+          }
+
+          setMediaSessionPlaybackState(state);
+        }
         // Sum loaded audio durations and show the total in the headline.
         function updateTotalPlaytime() {
           if (!totalPlaytimeEl) {
@@ -321,9 +353,15 @@ usort($songs, function ($a, $b) {
           });
 
           currentTrackEl.textContent = row ? row.dataset.song : "Choose a track";
+
+          if (row) {
+            refreshMediaSession(row);
+          } else {
+            setMediaSessionPlaybackState("none");
+          }
         }
 
-        function playRow(row, resetPosition = true) {
+        function playRow(row, resetPosition = true, delay = 100) {
           if (!row) {
             return;
           }
@@ -343,20 +381,88 @@ usort($songs, function ($a, $b) {
 
           autoAdvanceTimer = window.setTimeout(() => {
             player.play().catch(() => {});
-          }, 100);
+          }, delay);
         }
 
-        function playNextTrack() {
+        function playNextTrack(delay = 100) {
           const rows = songRows();
           const currentIndex = activeRow ? rows.indexOf(activeRow) : -1;
           const nextRow = rows[currentIndex + 1];
 
           if (nextRow) {
-            playRow(nextRow, true);
+            playRow(nextRow, true, delay);
           } else {
             setActiveRow(null);
+            setMediaSessionPlaybackState("none");
             player.removeAttribute("data-code");
           }
+        }
+
+        function playPreviousTrack() {
+          const rows = songRows();
+          const currentIndex = activeRow ? rows.indexOf(activeRow) : -1;
+          const previousRow = rows[currentIndex - 1];
+
+          if (previousRow) {
+            playRow(previousRow, true);
+          }
+        }
+
+        function setupMediaSessionActions() {
+          if (!("mediaSession" in navigator)) {
+            return;
+          }
+
+          const actions = {
+            play: () => {
+              refreshMediaSession(activeRow, "playing");
+              player.play().catch(() => {});
+            },
+            pause: () => {
+              player.pause();
+              refreshMediaSession(activeRow, "paused");
+            },
+            nexttrack: () => playNextTrack(),
+            previoustrack: () => playPreviousTrack()
+          };
+
+          Object.entries(actions).forEach(([action, handler]) => {
+            try {
+              navigator.mediaSession.setActionHandler(action, handler);
+            } catch (error) {
+              // Some browsers expose Media Session metadata but not every action.
+            }
+          });
+        }
+
+
+        // On Android/Firefox lock screens, the page can be suspended after the ended event.
+        // Switch just before the media session ends so playback remains continuous in the background.
+        function maybeHandoffBeforeEnded() {
+          if (!activeRow || player.paused || !Number.isFinite(player.duration) || player.duration <= 0) {
+            return;
+          }
+
+          const remainingSeconds = player.duration - player.currentTime;
+
+          if (remainingSeconds > 0.45 || handedOffFromCode === player.dataset.code) {
+            return;
+          }
+
+          const rows = songRows();
+          const currentIndex = rows.indexOf(activeRow);
+
+          if (!rows[currentIndex + 1]) {
+            return;
+          }
+
+          handedOffFromCode = player.dataset.code;
+          isAutoHandoff = true;
+          refreshMediaSession(rows[currentIndex + 1], "playing");
+          playNextTrack(0);
+          window.setTimeout(() => {
+            isAutoHandoff = false;
+          }, 500);
         }
 
         // Start dragging only when the user presses the handle, not the play or download controls.
@@ -440,23 +546,38 @@ usort($songs, function ($a, $b) {
         });
 
         player.addEventListener("play", () => {
+          handedOffFromCode = null;
+
           if (activeRow) {
             setActiveRow(activeRow);
+            refreshMediaSession(activeRow, "playing");
           }
         });
 
         player.addEventListener("pause", () => {
           if (!player.ended && activeRow) {
             setActiveRow(activeRow);
+            refreshMediaSession(activeRow, "paused");
           }
         });
 
-        player.addEventListener("ended", playNextTrack);
+        player.addEventListener("timeupdate", maybeHandoffBeforeEnded);
+        player.addEventListener("ended", () => {
+          if (!isAutoHandoff) {
+            playNextTrack();
+          }
+        });
 
         // Restore your saved order after all functions and listeners are ready.
+        setupMediaSessionActions();
         restoreOrder();
         updateTotalPlaytime();
         songRows().forEach(loadTrackDuration);
+      }
+      if ("serviceWorker" in navigator) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker.register("service-worker.js").catch(() => {});
+        });
       }
     </script>
   </body>

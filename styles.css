@@ -41,12 +41,23 @@ body {
 }
 
 .eyebrow {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
   margin: 0 0 6px;
   color: var(--cool);
   font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0;
   text-transform: uppercase;
+}
+
+.site-version {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  opacity: 0.7;
+  text-transform: none;
 }
 
 h1,
